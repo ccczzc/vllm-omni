@@ -2286,9 +2286,9 @@ class TestTTSAsyncOffloading:
         qwen3_tts_server._build_tts_params.assert_called_once()
         qwen3_tts_server._estimate_prompt_len_async.assert_awaited_once()
 
-    def test_prepare_speech_generation_builds_voxtream2_prompt(self, voxtream2_server):
+    def test_prepare_speech_generation_builds_voxtream2_prompt(self, voxtream2_server, mocker: MockerFixture):
         """Voxtream2 path should pass text and a resolved ref-audio path to Omni."""
-        voxtream2_server._resolve_ref_audio = AsyncMock(return_value=([0.0] * 24000, 24000))
+        voxtream2_server._resolve_ref_audio = mocker.AsyncMock(return_value=([0.0] * 24000, 24000))
         request = OpenAICreateSpeechRequest(input="hello voxtream", ref_audio="data:audio/wav;base64,AAAA")
 
         request_id, generator, tts_params = asyncio.run(voxtream2_server._prepare_speech_generation(request))
@@ -2306,7 +2306,7 @@ class TestTTSAsyncOffloading:
         tmp_path.unlink(missing_ok=True)
 
     def test_prepare_speech_generation_accepts_voxtream2_file_under_root(
-        self, voxtream2_server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, voxtream2_server, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
     ):
         voxtream_root = tmp_path / "voxtream"
         audio_dir = voxtream_root / "assets" / "audio"
@@ -2314,7 +2314,7 @@ class TestTTSAsyncOffloading:
         ref_audio = audio_dir / "english_female.wav"
         ref_audio.write_bytes(b"not-a-real-wav")
         monkeypatch.setenv("VOXTREAM2_ROOT", str(voxtream_root))
-        voxtream2_server._resolve_ref_audio = AsyncMock()
+        voxtream2_server._resolve_ref_audio = mocker.AsyncMock()
 
         request = OpenAICreateSpeechRequest(input="hello voxtream", ref_audio=ref_audio.as_uri())
         _, _, tts_params = asyncio.run(voxtream2_server._prepare_speech_generation(request))

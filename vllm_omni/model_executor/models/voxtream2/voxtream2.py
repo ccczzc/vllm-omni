@@ -7,35 +7,33 @@ changes and is left out here.
 """
 
 from __future__ import annotations
+
 import json
+from collections.abc import Generator, Iterable
 from pathlib import Path
-from collections.abc import Iterable
-from typing import Any, Generator, List
+from typing import Any
 
 import numpy as np
 import torch
 import torch._inductor.config
+import torch.nn as nn
+from vllm.config import VllmConfig
 
-torch.set_float32_matmul_precision("medium")
-torch._inductor.config.fx_graph_cache = True
-
+from vllm_omni.logger import init_logger
+from vllm_omni.model_executor.models.output_templates import OmniOutput
 from vllm_omni.model_executor.models.voxtream2.voxtream2_import_utils import (
     ensure_voxtream_available,
     resolve_voxtream_file,
 )
 
+torch.set_float32_matmul_precision("medium")
+torch._inductor.config.fx_graph_cache = True
+
 ensure_voxtream_available()
 
-from voxtream.config import SpeechGeneratorConfig
-from voxtream.generator import SpeechGenerator
-from voxtream.utils.generator import interpolate_speaking_rate_params
-
-import torch.nn as nn
-from vllm.config import VllmConfig
-
-# vLLM-omni specific imports
-from vllm_omni.model_executor.models.output_templates import OmniOutput
-from vllm_omni.logger import init_logger
+from voxtream.config import SpeechGeneratorConfig  # noqa: E402
+from voxtream.generator import SpeechGenerator  # noqa: E402
+from voxtream.utils.generator import interpolate_speaking_rate_params  # noqa: E402
 
 logger = init_logger(__name__)
 
@@ -98,7 +96,7 @@ class Voxtream2ForConditionalGeneration(nn.Module):
         self,
         prompt_audio_path: Path,
         text: str | Generator[str, None, None],
-        target_spk_rate_cnt: List[int] = None,
+        target_spk_rate_cnt: list[int] = None,
         spk_rate_weight: float = None,
         cfg_gamma: float = None,
         enhance_prompt: bool = None,
@@ -218,7 +216,8 @@ class Voxtream2ForConditionalGeneration(nn.Module):
 
             if not isinstance(ref_audio_path, str) or not ref_audio_path:
                 raise ValueError(
-                    "Voxtream2 requires `ref_audio_path` (or `ref_audio` / `prompt_audio_path`) in additional information."
+                    "Voxtream2 requires `ref_audio_path` (or `ref_audio` / "
+                    "`prompt_audio_path`) in additional information."
                 )
 
             # Optional speaking-rate control. This intentionally only
