@@ -168,6 +168,12 @@ _OMNI_MODELS = {
         "dynin_omni",
         "DyninOmniForConditionalGeneration",
     ),
+    ## Voxtream2
+    "Voxtream2ForConditionalGeneration": (
+        "voxtream2",
+        "voxtream2",
+        "Voxtream2ForConditionalGeneration",
+    ),
 }
 
 

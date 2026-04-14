@@ -21,6 +21,7 @@ _ARCH_TO_MODEL_TYPE: dict[str, str] = {
     "CosyVoice3Model": "cosyvoice3",
     "OmniVoiceModel": "omnivoice",
     "VoxCPM2TalkerForConditionalGeneration": "voxcpm2",
+    "Voxtream2ForConditionalGeneration": "voxtream2",
 }
 
 # Maps model architecture names to tokenizer subfolder paths within HF repos.
@@ -38,6 +39,7 @@ def _register_omni_hf_configs() -> None:
         from vllm_omni.model_executor.models.qwen3_tts.configuration_qwen3_tts import (
             Qwen3TTSConfig,
         )
+        from vllm_omni.model_executor.models.voxtream2.config import Voxtream2HFConfig
         from vllm_omni.model_executor.models.voxtral_tts.configuration_voxtral_tts import (
             VoxtralTTSConfig,
         )
@@ -58,6 +60,7 @@ def _register_omni_hf_configs() -> None:
         ("qwen3_tts", Qwen3TTSConfig),
         ("cosyvoice3", CosyVoice3Config),
         ("omnivoice", OmniVoiceConfig),
+        ("voxtream2", Voxtream2HFConfig),
         ("voxtral_tts", VoxtralTTSConfig),
         ("voxcpm2", VoxCPM2Config),
     ]:
