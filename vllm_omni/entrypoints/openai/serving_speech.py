@@ -6,12 +6,10 @@ import math
 import os
 import re
 import struct
-import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
 
 import numpy as np
 import soundfile as sf
@@ -54,7 +52,6 @@ _OMNIVOICE_TTS_MODEL_STAGES = {"omnivoice_generator"}
 _VOXCPM_TTS_MODEL_STAGES = {"latent_generator", "vae"}
 _VOXCPM2_TTS_MODEL_STAGES = {"latent_generator"}
 _VOXTREAM2_TTS_MODEL_STAGES = {"voxtream2"}
-_VOXTREAM2_ALLOWED_LOCAL_MEDIA_PATH_ENV = "VOXTREAM2_ALLOWED_LOCAL_MEDIA_PATH"
 _TTS_MODEL_STAGES: set[str] = (
     _VOXTRAL_TTS_MODEL_STAGES
     | _QWEN3_TTS_MODEL_STAGES
@@ -1510,86 +1507,23 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
         under configured media roots or Voxtream roots because top-level
         ``--allowed-local-media-path`` is ignored when stage YAML is used.
         """
-        from vllm_omni.model_executor.models.voxtream2.voxtream2_utils import build_voxtream2_prompt
+        from vllm_omni.model_executor.models.voxtream2.voxtream2_utils import (
+            build_voxtream2_prompt,
+            prepare_voxtream2_ref_audio_path,
+        )
 
-        ref_audio_path = self._resolve_voxtream2_local_ref_audio_path(request.ref_audio)
+        model_config = None if self._diffusion_mode else getattr(self, "model_config", None)
+        ref_audio_path, tmp_path = await prepare_voxtream2_ref_audio_path(
+            request.ref_audio,
+            resolve_ref_audio=self._resolve_ref_audio,
+            uploaded_speakers_dir=self.uploaded_speakers_dir,
+            allowed_local_media_path=getattr(model_config, "allowed_local_media_path", None),
+        )
         tts_params: dict[str, Any] = {}
-        if ref_audio_path is None:
-            wav_samples, sr = await self._resolve_ref_audio(request.ref_audio)
-            ref_audio = np.asarray(wav_samples, dtype=np.float32)
-
-            fd, tmp_path = tempfile.mkstemp(
-                prefix="voxtream2_ref_",
-                suffix=".wav",
-                dir=str(self.uploaded_speakers_dir),
-            )
-            os.close(fd)
-            sf.write(tmp_path, ref_audio, sr, format="WAV")
-            ref_audio_path = tmp_path
+        if tmp_path is not None:
             tts_params["_voxtream2_temp_ref_audio_path"] = tmp_path
 
         return build_voxtream2_prompt(request.input, ref_audio_path), tts_params
-
-    @staticmethod
-    def _split_local_media_roots(value: Any) -> list[str]:
-        if value is None or value is False:
-            return []
-        if isinstance(value, os.PathLike):
-            return [os.fspath(value)]
-        if isinstance(value, str):
-            return [part for part in value.split(os.pathsep) if part]
-        if isinstance(value, (list, tuple, set)):
-            roots: list[str] = []
-            for item in value:
-                roots.extend(OmniOpenAIServingSpeech._split_local_media_roots(item))
-            return roots
-        return []
-
-    def _iter_voxtream2_local_audio_roots(self) -> list[Path]:
-        roots: list[Path] = []
-        model_config = None if self._diffusion_mode else getattr(self, "model_config", None)
-        candidates = self._split_local_media_roots(getattr(model_config, "allowed_local_media_path", None))
-        for env_name in (
-            _VOXTREAM2_ALLOWED_LOCAL_MEDIA_PATH_ENV,
-            "VOXTREAM2_ROOT",
-            "VOXTREAM_ROOT",
-            "VLLM_OMNI_VOXTREAM_CODE_PATH",
-        ):
-            candidates.extend(self._split_local_media_roots(os.environ.get(env_name)))
-
-        seen: set[Path] = set()
-        for candidate in candidates:
-            try:
-                root = Path(candidate).expanduser().resolve()
-            except OSError:
-                continue
-            if root in seen:
-                continue
-            seen.add(root)
-            roots.append(root)
-        return roots
-
-    def _resolve_voxtream2_local_ref_audio_path(self, ref_audio: str) -> str | None:
-        parsed = urlparse(ref_audio)
-        if parsed.scheme != "file":
-            return None
-        if parsed.netloc not in ("", "localhost"):
-            raise ValueError("Voxtream2 ref_audio file URI must point to a local file")
-
-        ref_path = Path(unquote(parsed.path)).expanduser().resolve()
-        if not ref_path.is_file():
-            raise ValueError(f"Voxtream2 ref_audio file does not exist: {ref_path}")
-
-        roots = self._iter_voxtream2_local_audio_roots()
-        if any(ref_path == root or root in ref_path.parents for root in roots):
-            return str(ref_path)
-
-        root_hint = ", ".join(str(root) for root in roots) if roots else "none"
-        raise ValueError(
-            "Voxtream2 local file ref_audio must be under one of the configured "
-            f"media roots ({root_hint}). Set {_VOXTREAM2_ALLOWED_LOCAL_MEDIA_PATH_ENV} "
-            "or VOXTREAM2_ROOT to allow this path."
-        )
 
     # ---- Common speech generation helpers ----
 
@@ -1776,6 +1710,16 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
         async for chunk in self._generate_pcm_chunks(generator, request_id):
             yield chunk
 
+    @staticmethod
+    def _cleanup_temp_ref_audio(tts_params: dict[str, Any]) -> None:
+        tmp_ref_audio_path = tts_params.get("_voxtream2_temp_ref_audio_path")
+        if not tmp_ref_audio_path:
+            return
+        try:
+            Path(tmp_ref_audio_path).unlink(missing_ok=True)
+        except Exception:
+            logger.debug("Failed to remove temporary Voxtream2 ref audio %s", tmp_ref_audio_path, exc_info=True)
+
     async def _generate_audio_bytes(
         self,
         request: OpenAICreateSpeechRequest,
@@ -1788,12 +1732,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             async for res in generator:
                 final_output = res
         finally:
-            tmp_ref_audio_path = tts_params.get("_voxtream2_temp_ref_audio_path")
-            if tmp_ref_audio_path:
-                try:
-                    Path(tmp_ref_audio_path).unlink(missing_ok=True)
-                except Exception:
-                    logger.debug("Failed to remove temporary Voxtream2 ref audio %s", tmp_ref_audio_path, exc_info=True)
+            self._cleanup_temp_ref_audio(tts_params)
 
         if final_output is None:
             raise ValueError("No output generated from the model.")
