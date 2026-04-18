@@ -26,9 +26,6 @@ from vllm_omni.model_executor.models.voxtream2.voxtream2_import_utils import (
     resolve_voxtream_file,
 )
 
-torch.set_float32_matmul_precision("medium")
-torch._inductor.config.fx_graph_cache = True
-
 ensure_voxtream_available()
 
 from voxtream.config import SpeechGeneratorConfig  # noqa: E402
@@ -49,6 +46,8 @@ class Voxtream2ForConditionalGeneration(nn.Module):
         config: SpeechGeneratorConfig | None = None,
         compile: bool = False,
     ):
+        torch.set_float32_matmul_precision("medium")
+        torch._inductor.config.fx_graph_cache = True
         super().__init__()
         del prefix
 
@@ -102,7 +101,7 @@ class Voxtream2ForConditionalGeneration(nn.Module):
         enhance_prompt: bool = None,
         apply_vad: bool = None,
         yield_codec_tokens: bool = False,
-    ) -> Generator[np.ndarray | torch.Tensor, None, None]:
+    ) -> Generator[tuple[np.ndarray, float], None, None]:
         if yield_codec_tokens:
             raise NotImplementedError(
                 "Voxtream2 SpeechGenerator wrapper currently supports "
@@ -239,7 +238,7 @@ class Voxtream2ForConditionalGeneration(nn.Module):
                 )
 
             frames: list[torch.Tensor] = []
-            for audio_frame, _ in self.generate_stream(
+            for audio_frame, _gen_time in self.generate_stream(
                 prompt_audio_path=Path(ref_audio_path),
                 text=text,
                 target_spk_rate_cnt=target_spk_rate_cnt,

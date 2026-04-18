@@ -17,13 +17,17 @@ import soundfile as sf
 import torch
 
 from vllm_omni.entrypoints.omni import Omni
+from vllm_omni.model_executor.models.voxtream2.voxtream2_utils import (
+    VOXTREAM2_DEFAULT_SAMPLE_RATE,
+    build_voxtream2_prompt,
+    flatten_voxtream2_audio_output,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_MODEL = "herimor/voxtream2"
 DEFAULT_STAGE_CONFIG = REPO_ROOT / "vllm_omni" / "model_executor" / "stage_configs" / "voxtream2_1stage.yaml"
 DEFAULT_META = REPO_ROOT / "voxtream" / "assets" / "benchmark" / "meta.csv"
 DEFAULT_REF_AUDIO = REPO_ROOT / "voxtream" / "assets" / "audio" / "english_male.wav"
-SAMPLE_RATE = 24_000
 
 DEFAULT_PROMPTS = [
     "Hello, welcome to the Voxtream2 benchmark test.",
@@ -68,38 +72,8 @@ class BenchmarkResult:
     per_request: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _estimate_prompt_len(text: str) -> int:
-    return max(64, len(text) // 2 + 64)
-
-
 def _build_prompt(text: str, ref_audio: Path) -> dict[str, Any]:
-    return {
-        "prompt_token_ids": [1] * _estimate_prompt_len(text),
-        "additional_information": {
-            "text": [text],
-            "ref_audio_path": str(ref_audio),
-        },
-    }
-
-
-def _flatten_audio(multimodal_output: dict[str, Any]) -> tuple[torch.Tensor, int]:
-    audio = multimodal_output.get("audio")
-    if audio is None:
-        audio = multimodal_output.get("model_outputs")
-    if audio is None:
-        return torch.zeros((0,), dtype=torch.float32), SAMPLE_RATE
-
-    if isinstance(audio, list):
-        tensors = [torch.as_tensor(item).reshape(-1).float().cpu() for item in audio if item is not None]
-        audio_tensor = torch.cat(tensors, dim=-1) if tensors else torch.zeros((0,), dtype=torch.float32)
-    else:
-        audio_tensor = torch.as_tensor(audio).reshape(-1).float().cpu()
-
-    sr_raw = multimodal_output.get("sr", SAMPLE_RATE)
-    if isinstance(sr_raw, list):
-        sr_raw = sr_raw[-1] if sr_raw else SAMPLE_RATE
-    sample_rate = int(sr_raw.item()) if hasattr(sr_raw, "item") else int(sr_raw)
-    return audio_tensor, sample_rate
+    return build_voxtream2_prompt(text, str(ref_audio))
 
 
 def _extract_output_audio(outputs: list[Any]) -> tuple[torch.Tensor, int]:
@@ -107,7 +81,11 @@ def _extract_output_audio(outputs: list[Any]) -> tuple[torch.Tensor, int]:
         mm = getattr(output, "multimodal_output", None)
         if not isinstance(mm, dict) or not mm:
             continue
-        audio, sample_rate = _flatten_audio(mm)
+        audio, sample_rate = flatten_voxtream2_audio_output(
+            mm,
+            default_sample_rate=VOXTREAM2_DEFAULT_SAMPLE_RATE,
+            require_audio=False,
+        )
         if audio.numel() > 0:
             return audio, sample_rate
 

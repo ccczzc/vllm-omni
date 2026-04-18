@@ -296,6 +296,8 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             return "voxcpm2"
         if model_arch == "VoxCPMForConditionalGeneration":
             return "voxcpm"
+        if model_stage in _VOXTREAM2_TTS_MODEL_STAGES:
+            return "voxtream2"
         if model_stage in _QWEN3_TTS_MODEL_STAGES:
             return "qwen3_tts"
         if model_stage in _VOXTRAL_TTS_MODEL_STAGES:
@@ -819,6 +821,8 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             return self._validate_voxcpm_request(request)
         if self._tts_model_type == "voxcpm2":
             return None  # VoxCPM2 accepts any text input
+        if self._tts_model_type == "voxtream2":
+            return self._validate_voxtream2_request(request)
         return self._validate_qwen_tts_request(request)
 
     def _voxcpm2_encode(self, text: str) -> list[int]:
@@ -888,7 +892,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             return fmt_err
         if request.stream:
             return "Voxtream2 online serving currently supports non-streaming speech requests only"
-        
+
     def _validate_voxcpm_request(self, request: OpenAICreateSpeechRequest) -> str | None:
         """Validate VoxCPM request parameters. Returns error message or None."""
         if not request.input or not request.input.strip():
@@ -1506,6 +1510,8 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
         under configured media roots or Voxtream roots because top-level
         ``--allowed-local-media-path`` is ignored when stage YAML is used.
         """
+        from vllm_omni.model_executor.models.voxtream2.voxtream2_utils import build_voxtream2_prompt
+
         ref_audio_path = self._resolve_voxtream2_local_ref_audio_path(request.ref_audio)
         tts_params: dict[str, Any] = {}
         if ref_audio_path is None:
@@ -1522,16 +1528,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             ref_audio_path = tmp_path
             tts_params["_voxtream2_temp_ref_audio_path"] = tmp_path
 
-        text = request.input
-        prompt_len = max(64, len(text) // 2 + 64)
-        prompt = {
-            "prompt_token_ids": [1] * prompt_len,
-            "additional_information": {
-                "text": [text],
-                "ref_audio_path": ref_audio_path,
-            },
-        }
-        return prompt, tts_params
+        return build_voxtream2_prompt(request.input, ref_audio_path), tts_params
 
     @staticmethod
     def _split_local_media_roots(value: Any) -> list[str]:

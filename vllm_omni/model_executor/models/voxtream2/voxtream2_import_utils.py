@@ -15,7 +15,6 @@ import os
 import sys
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
 
 from vllm.logger import init_logger
 
@@ -180,17 +179,3 @@ def ensure_voxtream_available() -> None:
         "`pip install --no-deps -e /path/to/voxtream`, or set "
         "VLLM_OMNI_VOXTREAM_CODE_PATH to the Voxtream source tree."
     )
-
-
-def import_voxtream_attrs(module_name: str, *attr_names: str) -> tuple[Any, ...]:
-    """Import attributes from the ``voxtream`` package."""
-    ensure_voxtream_available()
-    try:
-        module = importlib.import_module(module_name)
-        return tuple(getattr(module, name) for name in attr_names)
-    except (ImportError, AttributeError) as exc:
-        raise ImportError(
-            f"Could not import {attr_names} from {module_name}. "
-            "Please check the installed/source Voxtream package version. "
-            f"Last error: {exc}"
-        ) from exc

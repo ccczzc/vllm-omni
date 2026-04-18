@@ -7,11 +7,14 @@ import os
 from pathlib import Path
 
 import soundfile as sf
-import torch
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
 from vllm_omni.entrypoints.omni import Omni
 from vllm_omni.model_executor.models.voxtream2.voxtream2_import_utils import ensure_voxtream_available
+from vllm_omni.model_executor.models.voxtream2.voxtream2_utils import (
+    build_voxtream2_prompt,
+    flatten_voxtream2_audio_output,
+)
 
 ensure_voxtream_available()
 
@@ -30,42 +33,8 @@ DEFAULT_STAGE_CONFIG = os.path.join(
 )
 
 
-def _estimate_prompt_len(text: str) -> int:
-    return max(64, len(text) // 2 + 64)
-
-
 def _build_prompt(text: str, ref_audio: str) -> dict:
-    return {
-        "prompt_token_ids": [1] * _estimate_prompt_len(text),
-        "additional_information": {
-            "text": [text],
-            "ref_audio_path": ref_audio,
-        },
-    }
-
-
-def _flatten_audio(multimodal_output: dict) -> tuple[torch.Tensor, int]:
-    audio = multimodal_output.get("audio")
-    if audio is None:
-        audio = multimodal_output.get("model_outputs")
-    if audio is None:
-        raise ValueError(f"No audio found in multimodal_output keys={list(multimodal_output.keys())}")
-
-    if isinstance(audio, list):
-        if not audio:
-            audio_tensor = torch.zeros((0,), dtype=torch.float32)
-        else:
-            audio_tensor = torch.cat([a.reshape(-1).float() for a in audio], dim=-1)
-    elif isinstance(audio, torch.Tensor):
-        audio_tensor = audio.reshape(-1).float()
-    else:
-        audio_tensor = torch.tensor(audio, dtype=torch.float32).reshape(-1)
-
-    sr_raw = multimodal_output.get("sr", 24000)
-    if isinstance(sr_raw, list):
-        sr_raw = sr_raw[-1] if sr_raw else 24000
-    sample_rate = int(sr_raw.item()) if hasattr(sr_raw, "item") else int(sr_raw)
-    return audio_tensor, sample_rate
+    return build_voxtream2_prompt(text, ref_audio)
 
 
 def parse_args():
@@ -117,7 +86,7 @@ def main(args):
             if request_output is None or not request_output.outputs:
                 continue
             mm = request_output.outputs[0].multimodal_output
-            audio_tensor, sample_rate = _flatten_audio(mm)
+            audio_tensor, sample_rate = flatten_voxtream2_audio_output(mm)
             sf.write(str(output_path), audio_tensor.cpu().numpy(), sample_rate, format="WAV")
             logger.info("Saved %d samples @ %d Hz to %s", audio_tensor.numel(), sample_rate, output_path)
             print(f"Saved audio to {output_path}")
